@@ -1,13 +1,18 @@
 #!/usr/bin/python
 
 import rospy
-from leg_tracker.msg import Person, PersonArray, Leg, LegArray
+
+# Custom messages
+from leg_tracker.msg import Person, PersonArray, Leg, LegArray 
+
+# ROS messages
 from visualization_msgs.msg import Marker
-from pykalman import KalmanFilter # Third party library. To install: http://pykalman.github.io/#installation
+from sensor_msgs.msg import LaserScan
+from nav_msgs.msg import OccupancyGrid
+
+# Standard python modules
 import numpy as np
-from munkres import Munkres # Third party library. For the minimum matching assignment problem. To install: https://pypi.python.org/pypi/munkres 
 import random
-from collections import deque
 import math
 import scipy.stats
 import scipy.spatial
@@ -16,14 +21,22 @@ import tf
 import copy
 import timeit
 import message_filters
-from sensor_msgs.msg import LaserScan
-from nav_msgs.msg import OccupancyGrid
+import sys
+
+# External modules
+from munkres import Munkres # For the minimum matching assignment problem. To install: https://pypi.python.org/pypi/munkres 
+from pykalman import KalmanFilter # To install: http://pykalman.github.io/#installation
 
 
 
-# A detected scan cluster    
 class DetectedCluster:
+    """
+    A detected scan cluster. Not yet associated to an existing track.
+    """
     def __init__(self, pos_x, pos_y, confidence, in_free_space):
+        """
+        Constructor
+        """
         self.pos_x = pos_x
         self.pos_y = pos_y
         self.confidence = confidence
@@ -31,22 +44,16 @@ class DetectedCluster:
         self.in_free_space_bool = None
 
 
-# A pair of legs that could potentially be a person
-# If validated, we think they represent a person
-class PotentialLegPair:
-    def __init__(self, leg_1, leg_2):
-        self.leg_1 = leg_1
-        self.leg_2 = leg_2
-        self.leg_1_initial_dist_travelled = leg_1.dist_travelled
-        self.leg_2_initial_dist_travelled = leg_2.dist_travelled
-        self.validated_person = False
-
-
-# A tracked object. Could be a person leg, entire person or any random object in the laser scan
 class ObjectTracked:
+    """
+    A tracked object. Could be a person leg, entire person or any arbitrary object in the laser scan.
+    """
     new_leg_id_num = 1
 
     def __init__(self, x, y, now, confidence, is_person, in_free_space): 
+        """
+        Constructor
+        """        
         self.id_num = ObjectTracked.new_leg_id_num
         ObjectTracked.new_leg_id_num += 1
         self.colour = (random.random(), random.random(), random.random())
@@ -60,16 +67,17 @@ class ObjectTracked:
         self.in_free_space = in_free_space
 
         # People are tracked via a constant-velocity Kalman filter with a Gaussian acceleration distrubtion
-        # Kalman filter params
-        # Found by trial and error. A better method would be to use a data-driven EM or spectral learning method to find the params. 
-        # The important part is that the observations are "weighted" higher than the motion model because they're more trustworthy and the motion model kinda sucks
+        # Kalman filter params were found by hand-tuning. 
+        # A better method would be to use data-driven EM find the params. 
+        # The important part is that the observations are "weighted" higher than the motion model 
+        # because they're more trustworthy and the motion model kinda sucks
         scan_frequency = rospy.get_param("scan_frequency", 7.5)
         delta_t = 1./scan_frequency
-        if scan_frequency > 7 and scan_frequency < 8:
+        if scan_frequency > 7.49 and scan_frequency < 7.51:
             std_process_noise = 0.06666
-        elif scan_frequency > 9 and scan_frequency < 11:
+        elif scan_frequency > 9.99 and scan_frequency < 10.01:
             std_process_noise = 0.05
-        elif scan_frequency > 14 and scan_frequency < 16:
+        elif scan_frequency > 14.99 and scan_frequency < 15.01:
             std_process_noise = 0.03333
         else:
             print "Scan frequency needs to be either 7.5, 10 or 15 or the standard deviation of the process noise needs to be tuned to your scanner frequency"
@@ -78,7 +86,8 @@ class ObjectTracked:
         std_obs = 0.1
         var_pos = std_pos**2
         var_vel = std_vel**2
-        var_obs_local = std_obs**2
+        # The observation noise is assumed to be different when updating the Kalman filter than when doing data association
+        var_obs_local = std_obs**2 
         self.var_obs = (std_obs + 0.4)**2
 
         self.filtered_state_means = np.array([x, y, 0, 0])
@@ -95,7 +104,7 @@ class ObjectTracked:
                                       [0, 0,       1,        0],
                                       [0, 0,       0,        1]])
 
-        # Oberservation model. Can observe pos_x and pos_y (unless person is occluded - we deal with this later). 
+        # Oberservation model. Can observe pos_x and pos_y (unless person is occluded). 
         observation_matrix = np.array([[1, 0, 0, 0],
                                        [0, 1, 0, 0]])
 
@@ -115,6 +124,9 @@ class ObjectTracked:
 
 
     def update(self, observations):
+        """
+        Update our tracked object with new observations
+        """
         self.filtered_state_means, self.filtered_state_covariances = (
             self.kf.filter_update(
                 self.filtered_state_means,
@@ -123,8 +135,12 @@ class ObjectTracked:
             )
         )
 
+        # Keep track of the distance it's travelled 
+        # We include an "if" structure to exclude small distance changes, 
+        # which are likely to have been caused by changes in observation angle
+        # or other similar factors, and not due to the object actually moving
         delta_dist_travelled = ((self.pos_x - self.filtered_state_means[0])**2 + (self.pos_y - self.filtered_state_means[1])**2)**(1./2.) 
-        if delta_dist_travelled > 0.01:
+        if delta_dist_travelled > 0.01: 
             self.dist_travelled += delta_dist_travelled
 
         self.pos_x = self.filtered_state_means[0]
@@ -134,22 +150,27 @@ class ObjectTracked:
     
 
 
-# Tracker for tracking all the people
 class KalmanMultiTracker:    
+    """
+    Tracker for tracking all the people and objects
+    """
     max_cost = 9999999
 
-    def __init__(self):  
+    def __init__(self):      
+        """
+        Constructor
+        """
         self.objects_tracked = []
         self.potential_leg_pairs = set()
         self.potential_leg_pair_initial_dist_travelled = {}
         self.people_tracked = []
-        self.prev_leg_marker_id = 0
+        self.prev_track_marker_id = 0
         self.prev_person_marker_id = 0
         self.prev_time = None
         self.listener = tf.TransformListener()
         self.local_map = None
         self.new_local_map_received = True
-        random.seed(1) # So we have the same psuedorandom numbers each time
+        random.seed(1) 
 
         # Get ROS params
         self.fixed_frame = rospy.get_param("fixed_frame", "odom")
@@ -171,10 +192,10 @@ class KalmanMultiTracker:
         self.latest_scan_header_stamp_with_tf_available = rospy.get_rostime()
 
     	# ROS publishers
-        self.people_tracked_pub = rospy.Publisher('people_tracked', PersonArray)
-        self.people_detected_pub = rospy.Publisher('people_detected', PersonArray)
-        self.marker_pub = rospy.Publisher('visualization_marker', Marker)
-        self.non_leg_clusters_pub = rospy.Publisher('non_leg_clusters', LegArray)
+        self.people_tracked_pub = rospy.Publisher('people_tracked', PersonArray, queue_size=300)
+        self.people_detected_pub = rospy.Publisher('people_detected', PersonArray, queue_size=300)
+        self.marker_pub = rospy.Publisher('visualization_marker', Marker, queue_size=300)
+        self.non_leg_clusters_pub = rospy.Publisher('non_leg_clusters', LegArray, queue_size=300)
 
         # ROS subscribers         
         self.detected_clusters_sub = rospy.Subscriber('detected_leg_clusters', LegArray, self.detected_clusters_callback)      
@@ -184,20 +205,30 @@ class KalmanMultiTracker:
                     
 
     def local_map_callback(self, map):
+        """
+        Local map callback to update our local map with a newly published one
+        """
         self.local_map = map
         self.new_local_map_received = True
 
 
-    def is_in_free_space(self, x, y):
+    def how_much_in_free_space(self, x, y):
+        """
+        Determine the degree to which the position (x,y) is in freespace according to our local map
+
+        @rtype:     float
+        @return:    degree to which the position (x,y) is in freespace (range: 0.-1.)
+        """
         # If we haven't got the local map yet, assume nothing's in freespace
         if self.local_map == None:
             return self.in_free_space_threshold*2
 
-        # Get the position in local map coords
+        # Get the position of (x,y) in local map coords
         map_x = int(round((x - self.local_map.info.origin.position.x)/self.local_map.info.resolution))
         map_y = int(round((y - self.local_map.info.origin.position.y)/self.local_map.info.resolution))
 
         # Take the average of the local map's values centred at (map_x, map_y), with a kernal size of <kernel_size>
+        # If called repeatedly on the same local_map, this could be sped up with a sum-table
         sum = 0
         kernel_size = 2;
         for i in xrange(map_x-kernel_size, map_x+kernel_size):
@@ -212,8 +243,10 @@ class KalmanMultiTracker:
         return percent
 
         
-    # Match detected legs to existing person legs using a global nearest neighbour matching
-    def match_detections_to_tracks_global_nearest_neighbour(self, objects_tracked, objects_detected):
+    def match_detections_to_tracks_GNN(self, objects_tracked, objects_detected):
+        """
+        Match detected objects to existing object tracks using a global nearest neighbour data association
+        """
         matched_tracks = {}
 
         # Populate match_dist matrix of mahalanobis_dist between every detection and every track
@@ -236,7 +269,7 @@ class KalmanMultiTracker:
                     else:
                         cost = self.max_cost 
                 new_row.append(cost)                    
-            # If the detection is within range of at least one person track, add it as an eligable detection in the munkres matching 
+            # If the detection is within range of at least one track, add it as an eligable detection in the munkres matching 
             if at_least_one_track_in_range: 
                 match_dist.append(new_row)
                 eligable_detections.append(detect)
@@ -244,7 +277,7 @@ class KalmanMultiTracker:
         # Run munkres on match_dist to get the lowest cost assignment
         if match_dist:
             munkres = Munkres()
-            # self.pad_matrix(match_dist, pad_value=self.max_cost) # Found no different when padding it 
+            # self.pad_matrix(match_dist, pad_value=self.max_cost) # I found no difference when padding it 
             indexes = munkres.compute(match_dist)
             for elig_detect_index, track_index in indexes:
                 if match_dist[elig_detect_index][track_index] < self.mahalanobis_dist_gate:
@@ -255,9 +288,11 @@ class KalmanMultiTracker:
         return matched_tracks
 
       
-    # Track people using detected clusters
-    # Called every time detect_leg_clusters publishes new sets of detected legs. 
     def detected_clusters_callback(self, detected_clusters_msg):    
+        """
+        Callback for every time detect_leg_clusters publishes new sets of detected clusters. 
+        It will try to match the newly detected clusters with tracked clusters from previous frames.
+        """
         # Waiting for the local map to be published before proceeding. This is ONLY needed so the benchmarks are consistent every iteration
         # Should be removed under regular operation
         if self.use_scan_header_stamp_for_tfs: # Assume <self.use_scan_header_stamp_for_tfs> means we're running the timing benchmark
@@ -279,7 +314,7 @@ class KalmanMultiTracker:
                 cluster.position.x, 
                 cluster.position.y, 
                 cluster.confidence, 
-                in_free_space=self.is_in_free_space(cluster.position.x, cluster.position.y)
+                in_free_space=self.how_much_in_free_space(cluster.position.x, cluster.position.y)
             )      
             if new_detected_cluster.in_free_space < self.in_free_space_threshold:
                 new_detected_cluster.in_free_space_bool = True
@@ -291,10 +326,7 @@ class KalmanMultiTracker:
 		# Propogate existing tracks
         to_duplicate = set()
         propogated = copy.deepcopy(self.objects_tracked)
-
-        tic_prop = timeit.default_timer()
-
-        for idx, propogated_track in enumerate(propogated):
+        for propogated_track in propogated:
             propogated_track.update(np.ma.masked_array(np.array([0, 0]), mask=[1,1])) 
             if propogated_track.is_person:
                 to_duplicate.add(propogated_track)
@@ -305,8 +337,8 @@ class KalmanMultiTracker:
             propogated.append(copy.deepcopy(propogated_track))
             duplicates[propogated_track] = propogated[-1]
 
-        # Match detected people to existing tracks
-        matched_tracks = self.match_detections_to_tracks_global_nearest_neighbour(propogated, detected_clusters)  
+        # Match detected objects to existing tracks
+        matched_tracks = self.match_detections_to_tracks_GNN(propogated, detected_clusters)  
   
         # Publish non-human clusters so the local grid occupancy map knows which scan clusters correspond to people
         non_legs_msg = LegArray()
@@ -321,7 +353,7 @@ class KalmanMultiTracker:
             non_legs_msg.legs.append(non_leg)              
         self.non_leg_clusters_pub.publish(non_legs_msg)  
 
-        # Update tracks with new oberservations 
+        # Update all tracks with new oberservations 
         tracks_to_delete = set()   
         for idx, track in enumerate(self.objects_tracked):
             propogated_track = propogated[idx] # Get the corresponding propogated track
@@ -360,7 +392,9 @@ class KalmanMultiTracker:
                 track.last_seen = now
                 track.seen_in_current_scan = True
             else: # propogated_track not matched to a detection
-                observations = np.ma.masked_array(np.array([0, 0]), mask=[1,1]) # don't provide a measurement update for Kalman filter
+                # don't provide a measurement update for Kalman filter 
+                # so send it a masked_array for its observations
+                observations = np.ma.masked_array(np.array([0, 0]), mask=[1,1]) 
                 track.seen_in_current_scan = False
                         
             # Input observations to Kalman filter
@@ -390,12 +424,16 @@ class KalmanMultiTracker:
         # Do some leg pairing to create potential people tracks/leg pairs
         for track_1 in self.objects_tracked:
             for track_2 in self.objects_tracked:
-                if track_1 != track_2 and track_1.id_num > track_2.id_num and (not track_1.is_person or not track_2.is_person) and (track_1, track_2) not in self.potential_leg_pairs:
+                if (track_1 != track_2 
+                    and track_1.id_num > track_2.id_num 
+                    and (not track_1.is_person or not track_2.is_person) 
+                    and (track_1, track_2) not in self.potential_leg_pairs
+                    ):
                     self.potential_leg_pairs.add((track_1, track_2))
                     self.potential_leg_pair_initial_dist_travelled[(track_1, track_2)] = (track_1.dist_travelled, track_2.dist_travelled)
         
         # We want to iterate over the potential leg pairs but iterating over the set <self.potential_leg_pairs> will produce arbitrary iteration orders.
-        # This is bad if we want repeatable tests. Otherwise, it shouldn't affect performance.
+        # This is bad if we want repeatable tests (but otherwise, it shouldn't affect performance).
         # So we'll create a sorted list and iterate over that.
         potential_leg_pairs_list = list(self.potential_leg_pairs)
         potential_leg_pairs_list.sort(key=lambda tup: (tup[0].id_num, tup[1].id_num))
@@ -408,7 +446,12 @@ class KalmanMultiTracker:
             # - or one of the legs has already been paired 
             # - or a leg has been deleted because it hasn't been seen for a while
             dist = ((track_1.pos_x - track_2.pos_x)**2 + (track_1.pos_y - track_2.pos_y)**2)**(1./2.)
-            if dist > self.max_leg_pairing_dist or track_1.deleted or track_2.deleted or (track_1.is_person and track_2.is_person) or track_1.confidence < self.confidence_threshold_to_maintain_track or track_2.confidence < self.confidence_threshold_to_maintain_track:
+            if (dist > self.max_leg_pairing_dist 
+                or track_1.deleted or track_2.deleted
+                or (track_1.is_person and track_2.is_person) 
+                or track_1.confidence < self.confidence_threshold_to_maintain_track 
+                or track_2.confidence < self.confidence_threshold_to_maintain_track
+                ):
                 leg_pairs_to_delete.add((track_1, track_2))
                 continue
 
@@ -420,10 +463,19 @@ class KalmanMultiTracker:
             if track_1.seen_in_current_scan and track_2.seen_in_current_scan:
                 track_1_initial_dist, track_2_initial_dist = self.potential_leg_pair_initial_dist_travelled[(track_1, track_2)]
                 dist_travelled = min(track_1.dist_travelled - track_1_initial_dist, track_2.dist_travelled - track_2_initial_dist)
-                if dist_travelled > self.dist_travelled_together_to_initiate_leg_pair and (track_1.in_free_space < self.in_free_space_threshold or track_2.in_free_space < self.in_free_space_threshold):
+                if (dist_travelled > self.dist_travelled_together_to_initiate_leg_pair 
+                    and (track_1.in_free_space < self.in_free_space_threshold or track_2.in_free_space < self.in_free_space_threshold)
+                    ):
                     if not track_1.is_person  and not track_2.is_person:
                         # Create a new person from this leg pair
-                        self.objects_tracked.append(ObjectTracked((track_1.pos_x+track_2.pos_x)/2., (track_1.pos_y+track_2.pos_y)/2., now, (track_1.confidence+track_2.confidence)/2., is_person=True, in_free_space=0.))                
+                        self.objects_tracked.append(
+                            ObjectTracked(
+                                (track_1.pos_x+track_2.pos_x)/2., 
+                                (track_1.pos_y+track_2.pos_y)/2., now, 
+                                (track_1.confidence+track_2.confidence)/2., 
+                                is_person=True, 
+                                in_free_space=0.)
+                            )                
                         track_1.deleted = True
                         track_2.deleted = True
                         self.objects_tracked.remove(track_1)
@@ -443,12 +495,14 @@ class KalmanMultiTracker:
             self.potential_leg_pairs.remove(leg_pair)
 
         # Publish to rviz and /people_tracked topic.
-        # self.publish_tracked_legs(now)
+        self.publish_tracked_objects(now)
         self.publish_tracked_people(now)
             
 
-    # Publish markers of tracked people to Rviz and to people_tracked topic
-    def publish_tracked_legs(self, now):
+    def publish_tracked_objects(self, now):
+        """
+        Publish markers of tracked objects to Rviz
+        """
         # Make sure we can get the required transform first:
         if self.use_scan_header_stamp_for_tfs:
             tf_time = now            
@@ -465,17 +519,17 @@ class KalmanMultiTracker:
         if not transform_available:
             rospy.loginfo("Person tracker: tf not avaiable. Not publishing people")
         else:
-            for leg in self.objects_tracked:
-                if leg.is_person:
+            for track in self.objects_tracked:
+                if track.is_person:
                     continue
                     
-                if self.publish_occluded or leg.seen_in_current_scan: # Only publish people who have been seen in current scan, unless we want to publish occluded people
-                    # Get the leg position in the <self.publish_people_frame> frame
+                if self.publish_occluded or track.seen_in_current_scan: # Only publish people who have been seen in current scan, unless we want to publish occluded people
+                    # Get the track position in the <self.publish_people_frame> frame
                     ps = PointStamped()
                     ps.header.frame_id = self.fixed_frame
                     ps.header.stamp = tf_time
-                    ps.point.x = leg.pos_x
-                    ps.point.y = leg.pos_y
+                    ps.point.x = track.pos_x
+                    ps.point.y = track.pos_y
                     try:
                         ps = self.listener.transformPoint(self.publish_people_frame, ps)
                     except:
@@ -485,11 +539,11 @@ class KalmanMultiTracker:
                     marker = Marker()
                     marker.header.frame_id = self.publish_people_frame
                     marker.header.stamp = now
-                    marker.ns = "legs_tracked"
-                    if leg.in_free_space < self.in_free_space_threshold:
-                        marker.color.r = leg.colour[0]
-                        marker.color.g = leg.colour[1]
-                        marker.color.b = leg.colour[2]                   
+                    marker.ns = "objects_tracked"
+                    if track.in_free_space < self.in_free_space_threshold:
+                        marker.color.r = track.colour[0]
+                        marker.color.g = track.colour[1]
+                        marker.color.b = track.colour[2]                   
                     else:                    
                         marker.color.r = 0 
                         marker.color.g = 0
@@ -506,51 +560,54 @@ class KalmanMultiTracker:
                     marker.pose.position.z = 0.15
                     self.marker_pub.publish(marker)
 
-                    # Publish a marker showing distance travelled:
-                    if leg.dist_travelled > 1:
-                        marker.color.r = 1.0
-                        marker.color.g = 1.0
-                        marker.color.b = 1.0
-                        marker.color.a = 1.0
-                        marker.id = marker_id
-                        marker_id += 1
-                        marker.type = Marker.TEXT_VIEW_FACING
-                        marker.text = str(round(leg.dist_travelled,1))
-                        marker.scale.z = 0.1            
-                        marker.pose.position.z = 0.6
-                        self.marker_pub.publish(marker)      
+                    # # Publish a marker showing distance travelled:
+                    # if track.dist_travelled > 1:
+                    #     marker.color.r = 1.0
+                    #     marker.color.g = 1.0
+                    #     marker.color.b = 1.0
+                    #     marker.color.a = 1.0
+                    #     marker.id = marker_id
+                    #     marker_id += 1
+                    #     marker.type = Marker.TEXT_VIEW_FACING
+                    #     marker.text = str(round(track.dist_travelled,1))
+                    #     marker.scale.z = 0.1            
+                    #     marker.pose.position.z = 0.6
+                    #     self.marker_pub.publish(marker)      
 
-                    # Publish <self.confidence_percentile>% confidence bounds of person as an ellipse:
-                    cov = leg.filtered_state_covariances[0][0] + leg.var_obs # cov_xx == cov_yy == cov
-                    std = cov**(1./2.)
-                    gate_dist_euclid = scipy.stats.norm.ppf(1.0 - (1.0-self.confidence_percentile)/2., 0, std)                    
-                    marker.type = Marker.SPHERE
-                    marker.scale.x = 2*gate_dist_euclid
-                    marker.scale.y = 2*gate_dist_euclid
-                    marker.scale.z = 0.01   
-                    marker.color.r = 1.0
-                    marker.color.g = 1.0
-                    marker.color.b = 1.0                
-                    marker.color.a = 0.1
-                    marker.pose.position.z = 0.0
-                    marker.id = marker_id 
-                    marker_id += 1                    
-                    self.marker_pub.publish(marker)
+                    # Publish <self.confidence_percentile>% confidence bounds of track as an ellipse:
+                    # cov = track.filtered_state_covariances[0][0] + track.var_obs # cov_xx == cov_yy == cov
+                    # std = cov**(1./2.)
+                    # gate_dist_euclid = scipy.stats.norm.ppf(1.0 - (1.0-self.confidence_percentile)/2., 0, std)                    
+                    # marker.type = Marker.SPHERE
+                    # marker.scale.x = 2*gate_dist_euclid
+                    # marker.scale.y = 2*gate_dist_euclid
+                    # marker.scale.z = 0.01   
+                    # marker.color.r = 1.0
+                    # marker.color.g = 1.0
+                    # marker.color.b = 1.0                
+                    # marker.color.a = 0.1
+                    # marker.pose.position.z = 0.0
+                    # marker.id = marker_id 
+                    # marker_id += 1                    
+                    # self.marker_pub.publish(marker)
 
-            # Clear previously published leg markers
-            for m_id in xrange(marker_id, self.prev_leg_marker_id):
+            # Clear previously published track markers
+            for m_id in xrange(marker_id, self.prev_track_marker_id):
                 marker = Marker()
                 marker.header.stamp = now                
                 marker.header.frame_id = self.publish_people_frame
-                marker.ns = "legs_tracked"
+                marker.ns = "objects_tracked"
                 marker.id = m_id
                 marker.action = marker.DELETE   
                 self.marker_pub.publish(marker)
-            self.prev_leg_marker_id = marker_id
+            self.prev_track_marker_id = marker_id
 
 
 
     def publish_tracked_people(self, now):
+        """
+        Publish markers of tracked people to Rviz and to <people_tracked> topic
+        """        
         people_tracked_msg = PersonArray()
         people_tracked_msg.header.stamp = now
         people_tracked_msg.header.frame_id = self.publish_people_frame        
@@ -591,36 +648,46 @@ class KalmanMultiTracker:
                         new_person = Person() 
                         new_person.pose.position.x = ps.point.x 
                         new_person.pose.position.y = ps.point.y 
+                        yaw = math.atan2(person.vel_y, person.vel_x)
+                        quaternion = tf.transformations.quaternion_from_euler(0, 0, yaw)
+                        new_person.pose.orientation.x = quaternion[0]
+                        new_person.pose.orientation.y = quaternion[1]
+                        new_person.pose.orientation.z = quaternion[2]
+                        new_person.pose.orientation.w = quaternion[3] 
                         new_person.id = person.id_num 
                         people_tracked_msg.people.append(new_person)
 
                         # publish rviz markers       
+                        # Cylinder for body 
                         marker = Marker()
                         marker.header.frame_id = self.publish_people_frame
                         marker.header.stamp = now
                         marker.ns = "People_tracked"
                         marker.color.r = person.colour[0]
                         marker.color.g = person.colour[1]
-                        marker.color.b = person.colour[2]                                      
-                        marker.color.a = 1
+                        marker.color.b = person.colour[2]          
+                        marker.color.a = (rospy.Duration(3) - (rospy.get_rostime() - person.last_seen)).to_sec()/rospy.Duration(3).to_sec() + 0.1
                         marker.pose.position.x = ps.point.x 
                         marker.pose.position.y = ps.point.y
-                        for i in xrange(2): # publish two markers per person: one for body and one for head
-                            marker.id = marker_id 
-                            marker_id += 1
-                            if i==0: # cylinder for body shape
-                                marker.type = Marker.CYLINDER
-                                marker.scale.x = 0.15
-                                marker.scale.y = 0.15
-                                marker.scale.z = 0.6
-                                marker.pose.position.z = 0.6
-                            else: # sphere for head shape
-                                marker.type = Marker.SPHERE
-                                marker.scale.x = 0.15
-                                marker.scale.y = 0.15
-                                marker.scale.z = 0.15                
-                                marker.pose.position.z = 0.975
-                            self.marker_pub.publish(marker)     
+                        marker.id = marker_id 
+                        marker_id += 1
+                        marker.type = Marker.CYLINDER
+                        marker.scale.x = 0.2
+                        marker.scale.y = 0.2
+                        marker.scale.z = 1.2
+                        marker.pose.position.z = 0.8
+                        self.marker_pub.publish(marker)  
+
+                        # Sphere for head shape                        
+                        marker.type = Marker.SPHERE
+                        marker.scale.x = 0.2
+                        marker.scale.y = 0.2
+                        marker.scale.z = 0.2                
+                        marker.pose.position.z = 1.5
+                        marker.id = marker_id 
+                        marker_id += 1                        
+                        self.marker_pub.publish(marker)     
+
                         # Text showing person's ID number 
                         marker.color.r = 1.0
                         marker.color.g = 1.0
@@ -631,20 +698,46 @@ class KalmanMultiTracker:
                         marker.type = Marker.TEXT_VIEW_FACING
                         marker.text = str(person.id_num)
                         marker.scale.z = 0.2         
-                        marker.pose.position.z = 1.3
+                        marker.pose.position.z = 1.7
                         self.marker_pub.publish(marker)
 
-                        # Publish <self.confidence_percentile>% confidence bounds of person as an ellipse:
+                        # Arrow pointing in direction they're facing with magnitude proportional to speed
+                        marker.color.r = person.colour[0]
+                        marker.color.g = person.colour[1]
+                        marker.color.b = person.colour[2]          
+                        marker.color.a = (rospy.Duration(3) - (rospy.get_rostime() - person.last_seen)).to_sec()/rospy.Duration(3).to_sec() + 0.1                        
+                        start_point = Point()
+                        end_point = Point()
+                        start_point.x = marker.pose.position.x 
+                        start_point.y = marker.pose.position.y 
+                        end_point.x = start_point.x + 0.5*person.vel_x
+                        end_point.y = start_point.y + 0.5*person.vel_y
+                        marker.pose.position.x = 0.
+                        marker.pose.position.y = 0.
+                        marker.pose.position.z = 0.1
+                        marker.id = marker_id
+                        marker_id += 1
+                        marker.type = Marker.ARROW
+                        marker.points.append(start_point)
+                        marker.points.append(end_point)
+                        marker.scale.x = 0.05
+                        marker.scale.y = 0.1
+                        marker.scale.z = 0.2
+                        self.marker_pub.publish(marker)                           
+
+                        # <self.confidence_percentile>% confidence bounds of person's position as an ellipse:
                         cov = person.filtered_state_covariances[0][0] + person.var_obs # cov_xx == cov_yy == cov
                         std = cov**(1./2.)
-                        gate_dist_euclid = scipy.stats.norm.ppf(1.0 - (1.0-self.confidence_percentile)/2., 0, std)                    
+                        gate_dist_euclid = scipy.stats.norm.ppf(1.0 - (1.0-self.confidence_percentile)/2., 0, std)
+                        marker.pose.position.x = ps.point.x 
+                        marker.pose.position.y = ps.point.y                    
                         marker.type = Marker.SPHERE
                         marker.scale.x = 2*gate_dist_euclid
                         marker.scale.y = 2*gate_dist_euclid
                         marker.scale.z = 0.01   
-                        marker.color.r = 1.0
-                        marker.color.g = 1.0
-                        marker.color.b = 1.0            
+                        marker.color.r = person.colour[0]
+                        marker.color.g = person.colour[1]
+                        marker.color.b = person.colour[2]            
                         marker.color.a = 0.1
                         marker.pose.position.z = 0.0
                         marker.id = marker_id 

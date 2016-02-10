@@ -1,3 +1,3 @@
-# Position and confidence of a leg 
+# Array of legs 
 std_msgs/Header header
 Leg[] legs

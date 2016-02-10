@@ -34,10 +34,9 @@
 
 #include <leg_tracker/laser_processor.h>
 
-#include <stdexcept>
 
-using namespace std;
-using namespace laser_processor;
+namespace laser_processor
+{
 
 Sample* Sample::Extract(int ind, const sensor_msgs::LaserScan& scan)
 {
@@ -48,7 +47,9 @@ Sample* Sample::Extract(int ind, const sensor_msgs::LaserScan& scan)
   s->x = cos( scan.angle_min + ind*scan.angle_increment ) * s->range;
   s->y = sin( scan.angle_min + ind*scan.angle_increment ) * s->range;
   if (s->range > scan.range_min && s->range < scan.range_max)
+  {
     return s;
+  }
   else
   {
     delete s;
@@ -58,13 +59,9 @@ Sample* Sample::Extract(int ind, const sensor_msgs::LaserScan& scan)
 
 void SampleSet::clear()
 {
-  for (SampleSet::iterator i = begin();
-       i != end();
-       i++)
-  {
+  for (SampleSet::iterator i = begin(); i != end(); ++i)
     delete (*i);
-  }
-  set<Sample*, CompareSample>::clear();
+  std::set<Sample*, CompareSample>::clear();
 }
 
 
@@ -72,10 +69,7 @@ tf::Point SampleSet::getPosition()
 {
   float x_mean = 0.0;
   float y_mean = 0.0;
-  for (iterator i = begin();
-       i != end();
-       i++)
-
+  for (iterator i = begin(); i != end(); ++i)
   {
     x_mean += ((*i)->x)/size();
     y_mean += ((*i)->y)/size();
@@ -91,14 +85,12 @@ ScanProcessor::ScanProcessor(const sensor_msgs::LaserScan& scan)
 
   SampleSet* cluster = new SampleSet;
 
-  for (uint32_t i = 0; i < scan.ranges.size(); i++)
+  for (int i = 0; i < scan.ranges.size(); i++)
   {
     Sample* s = Sample::Extract(i, scan);
 
     if (s != NULL)
-    {
       cluster->insert(s);
-    }
   }
 
   clusters_.push_back(cluster);
@@ -106,22 +98,22 @@ ScanProcessor::ScanProcessor(const sensor_msgs::LaserScan& scan)
 
 ScanProcessor::~ScanProcessor()
 {
-  for ( list<SampleSet*>::iterator c = clusters_.begin();
-        c != clusters_.end();
-        c++)
+  for ( std::list<SampleSet*>::iterator c = clusters_.begin(); c != clusters_.end(); ++c)
     delete (*c);
 }
 
 void ScanProcessor::removeLessThan(uint32_t num)
 {
-  list<SampleSet*>::iterator c_iter = clusters_.begin();
+  std::list<SampleSet*>::iterator c_iter = clusters_.begin();
   while (c_iter != clusters_.end())
   {
     if ( (*c_iter)->size() < num )
     {
       delete (*c_iter);
       clusters_.erase(c_iter++);
-    } else {
+    } 
+    else 
+    {
       ++c_iter;
     }
   }
@@ -130,30 +122,26 @@ void ScanProcessor::removeLessThan(uint32_t num)
 
 void ScanProcessor::splitConnected(float thresh)
 {
-  list<SampleSet*> tmp_clusters;
+  // Holds our temporary list of split clusters 
+  // because we will be modifying our existing list in the mean time
+  std::list<SampleSet*> tmp_clusters;
 
-  list<SampleSet*>::iterator c_iter = clusters_.begin();
+  std::list<SampleSet*>::iterator c_iter = clusters_.begin();
 
-  // For each cluster
   while (c_iter != clusters_.end())
   {
-    // Go through the entire list
-    while ((*c_iter)->size() > 0 )
+    while ((*c_iter)->size() > 0)
     {
-      // Take the first element
+      // Iterate over laser scan samples in clusters_
+      // and collect those which are within a euclidian distance of <thresh>
+      // and store new clusters in tmp_clusters
       SampleSet::iterator s_first = (*c_iter)->begin();
-
-      // Start a new queue
-      list<Sample*> sample_queue;
+      std::list<Sample*> sample_queue;
       sample_queue.push_back(*s_first);
-
       (*c_iter)->erase(s_first);
-
-      // Grow until we get to the end of the queue
-      list<Sample*>::iterator s_q = sample_queue.begin();
+      std::list<Sample*>::iterator s_q = sample_queue.begin();
       while (s_q != sample_queue.end())
       {
-        // max increment to expand search for nearby samples. Any sample of index > (*s_q)->index + expand we might as well not bother checking
         int expand = (int)(asin( thresh / (*s_q)->range ) / scan_.angle_increment);
 
         SampleSet::iterator s_rest = (*c_iter)->begin();
@@ -168,20 +156,7 @@ void ScanProcessor::splitConnected(float thresh)
           else 
           {
             ++s_rest;
-          }
-
-          // if ( (*s_rest)->range - (*s_q)->range > thresh)
-          // {
-          //   break;
-          // }
-          // else if (sqrt( pow( (*s_q)->x - (*s_rest)->x, 2.0f) + pow( (*s_q)->y - (*s_rest)->y, 2.0f)) < thresh)
-          // {
-          //   sample_queue.push_back(*s_rest);
-          //   (*c_iter)->erase(s_rest++);
-          //   break;
-          // } else {
-          //   ++s_rest;
-          // }          
+          }  
         }
         s_q++;
       }
@@ -202,5 +177,7 @@ void ScanProcessor::splitConnected(float thresh)
     clusters_.erase(c_iter++);
   }
 
+  // Insert our temporary clusters list back into the de facto list
   clusters_.insert(clusters_.begin(), tmp_clusters.begin(), tmp_clusters.end());
 }
+}; // namespace laser_processor 

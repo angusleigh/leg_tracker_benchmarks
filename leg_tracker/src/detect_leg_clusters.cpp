@@ -31,76 +31,38 @@
 *  ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 *  POSSIBILITY OF SUCH DAMAGE.
 *********************************************************************/
+// ROS 
 #include <ros/ros.h>
 
-#include <leg_tracker/laser_processor.h>
-#include <leg_tracker/calc_cluster_features.h>
+#include <tf/transform_listener.h>
 
+#include <visualization_msgs/Marker.h>
+#include <sensor_msgs/LaserScan.h>
+
+// OpenCV
 #include <opencv/cxcore.h>
 #include <opencv/cv.h>
 #include <opencv/ml.h>
 
-#include <sensor_msgs/LaserScan.h>
-
-#include <tf/transform_listener.h>
-#include <tf/message_filter.h>
-#include <message_filters/subscriber.h>
-
-#include <visualization_msgs/Marker.h>
-
-#include <algorithm>
+// Local headers
+#include <leg_tracker/laser_processor.h>
+#include <leg_tracker/cluster_features.h>
 
 // Custom messages
 #include <leg_tracker/Leg.h>
 #include <leg_tracker/LegArray.h>
 
 
-#include <time.h>
-#define BILLION  1000000000L;
 
-
-
-using namespace std;
-
-struct Cmp
-{
-    bool operator ()(const pair<leg_tracker::Leg, float> &a, const pair<leg_tracker::Leg, float> &b)
-    {
-        return a.second < b.second;
-    }
-};
-
-
+/**
+* @brief Detects clusters in laser scan with leg-like shapes
+*/
 class DetectLegClusters
 {
 public:
-  tf::TransformListener tfl_;
-
-  CvRTrees forest;
-
-  int feat_count_;
-
-  int scan_num_;
-  bool use_scan_header_stamp_for_tfs_;
-  ros::Time latest_scan_header_stamp_with_tf_available_;
-
-  ros::NodeHandle nh_;
-  ros::Publisher markers_pub_;
-  ros::Publisher detected_leg_clusters_pub_;
-  ros::Subscriber scan_sub_;
-
-  string fixed_frame_;
-  
-  double detection_threshold_;
-  double cluster_dist_euclid_;
-  int min_points_per_cluster_;  
-  double max_detect_distance_;
-  double marker_display_lifetime_;
-
-  int num_prev_markers_published_;
-
-  int max_detected_clusters_;
-
+  /**
+  * @brief Constructor
+  */
   DetectLegClusters():
   scan_num_(0),
   num_prev_markers_published_(0)
@@ -129,6 +91,8 @@ public:
     ROS_INFO("min_points_per_cluster: %d", min_points_per_cluster_);
     ROS_INFO("max_detect_distance: %.2f", max_detect_distance_);    
     ROS_INFO("marker_display_lifetime: %.2f", marker_display_lifetime_);
+    ROS_INFO("use_scan_header_stamp_for_tfs: %d", use_scan_header_stamp_for_tfs_);    
+    ROS_INFO("max_detected_clusters: %d", max_detected_clusters_);    
 
     // Load random forst
     forest.load(forest_file.c_str());
@@ -138,23 +102,53 @@ public:
 
     // ROS subscribers + publishers
     scan_sub_ =  nh_.subscribe(scan_topic, 10, &DetectLegClusters::laserCallback, this);
-    markers_pub_ = nh_.advertise<visualization_msgs::Marker>("visualization_marker", 200);
-    detected_leg_clusters_pub_ = nh_.advertise<leg_tracker::LegArray>("detected_leg_clusters", 200);
+    markers_pub_ = nh_.advertise<visualization_msgs::Marker>("visualization_marker", 20);
+    detected_leg_clusters_pub_ = nh_.advertise<leg_tracker::LegArray>("detected_leg_clusters",20);
   }
 
+private:
+  tf::TransformListener tfl_;
 
-  // Called every time a laser scan is published.
-  // It clusters the scan according to euclidian distance, predicts the confidence that each cluster is a human leg and publishes the results.
+  CvRTrees forest;
+
+  int feat_count_;
+
+  ClusterFeatures cf_;
+
+  int scan_num_;
+  bool use_scan_header_stamp_for_tfs_;
+  ros::Time latest_scan_header_stamp_with_tf_available_;
+
+  ros::NodeHandle nh_;
+  ros::Publisher markers_pub_;
+  ros::Publisher detected_leg_clusters_pub_;
+  ros::Subscriber scan_sub_;
+
+  std::string fixed_frame_;
+  
+  double detection_threshold_;
+  double cluster_dist_euclid_;
+  int min_points_per_cluster_;  
+  double max_detect_distance_;
+  double marker_display_lifetime_;
+  int max_detected_clusters_;
+
+  int num_prev_markers_published_;
+
+
+  /**
+  * @brief Clusters the scan according to euclidian distance, 
+  *        predicts the confidence that each cluster is a human leg and publishes the results
+  * 
+  * Called every time a laser scan is published.
+  */
   void laserCallback(const sensor_msgs::LaserScan::ConstPtr& scan)
-  {      
-    struct timespec tic, toc;
-    clock_gettime(CLOCK_REALTIME, &tic);
-
-    
+  {         
     laser_processor::ScanProcessor processor(*scan); 
     processor.splitConnected(cluster_dist_euclid_);        
     processor.removeLessThan(min_points_per_cluster_);    
 
+    // OpenCV matrix needed to use the OpenCV random forest classifier
     CvMat* tmp_mat = cvCreateMat(1, feat_count_, CV_32FC1); 
     
     leg_tracker::LegArray detected_leg_clusters;
@@ -187,14 +181,16 @@ public:
       transform_available = tfl_.canTransform(fixed_frame_, scan->header.frame_id, tf_time);
     }
     
-    // These are needed so we can publish the closest <max_detected_clusters_>
-    pair<leg_tracker::Leg, float> leg_and_rel_dist_pair;
-    set <pair<leg_tracker::Leg, float>, Cmp> leg_and_rel_dist_set;
-
-    if (transform_available)
+    // Store all processes legs in a set ordered according to their relative distance to the laser scanner
+    std::set <leg_tracker::Leg, CompareLegs> leg_set;
+    if (!transform_available)
+    {
+      ROS_INFO("Not publishing detected leg clusters because no tf was available");
+    }
+    else // transform_available
     {
       // Iterate through all clusters
-      for (list<laser_processor::SampleSet*>::iterator cluster = processor.getClusters().begin();
+      for (std::list<laser_processor::SampleSet*>::iterator cluster = processor.getClusters().begin();
        cluster != processor.getClusters().end();
        cluster++)
       {   
@@ -205,19 +201,18 @@ public:
         // Only consider clusters within max_distance. 
         if (rel_dist < max_detect_distance_)
         {
-          // Classify cluster
-          vector<float> f = calcClusterFeatures(*cluster, *scan);
+          // Classify cluster using random forest classifier
+          std::vector<float> f = cf_.calcClusterFeatures(*cluster, *scan);
           for (int k = 0; k < feat_count_; k++)
-          {
             tmp_mat->data.fl[k] = (float)(f[k]);
-          }
-          float probability_of_leg = forest.predict_prob( tmp_mat );
+          float probability_of_leg = forest.predict_prob(tmp_mat);
 
-          // Publish only clusters that have a confidence greater than detection_threshold_                 
+          // Consider only clusters that have a confidence greater than detection_threshold_                 
           if (probability_of_leg > detection_threshold_)
           { 
             // Transform cluster position to fixed frame
-            bool transform_successful_2 = false;
+            // This should always be succesful because we've checked earlier if a tf was available
+            bool transform_successful_2;
             try
             {
               tfl_.transformPoint(fixed_frame_, position, position);
@@ -225,70 +220,63 @@ public:
             }
             catch (tf::TransformException ex)
             {
-              ROS_INFO("Detect_leg_clusters: tf error at location 2");
+              ROS_ERROR("%s",ex.what());
               transform_successful_2 = false;
             }
 
             if (transform_successful_2)
             {  
-              // Publish to detected_leg_clusters topic
-              leg_tracker::Leg new_leg_cluster;
-              new_leg_cluster.position.x = position[0];
-              new_leg_cluster.position.y = position[1];
-              new_leg_cluster.confidence = probability_of_leg;
-              pair<leg_tracker::Leg, float> new_pair = make_pair(new_leg_cluster, rel_dist);
-              leg_and_rel_dist_set.insert(new_pair);
-              // detected_leg_clusters.legs.push_back(new_leg_cluster); 
+              // Add detected cluster to set of detected leg clusters, along with its relative position to the laser scanner
+              leg_tracker::Leg new_leg;
+              new_leg.position.x = position[0];
+              new_leg.position.y = position[1];
+              new_leg.confidence = probability_of_leg;
+              leg_set.insert(new_leg);
             }
           }
         }
       }     
     }    
-    else
-    {
-      ROS_INFO("Not publishing detected clusters because no tf was available at scan header time");
-    }
+ 
 
-    // // Publish detect legs to rviz
-    // if (max_detected_clusters_ < 0)
-    // {
-      // No limit on the detected clusters to publish so publish them all
+    // Publish detected legs to /detected_leg_clusters and to rviz
+    // They are ordered from closest to the laser scanner to furthest  
     int clusters_published_counter = 0;
     int id_num = 1;      
-    std::set<pair<leg_tracker::Leg, float> >::iterator it;
-    for (it = leg_and_rel_dist_set.begin(); it != leg_and_rel_dist_set.end(); ++it)
+    for (std::set<leg_tracker::Leg>::iterator it = leg_set.begin(); it != leg_set.end(); ++it)
     {
-      pair<leg_tracker::Leg, float> leg_dist_pair = *it;
-      leg_tracker::Leg leg_cluster = leg_dist_pair.first;
-      detected_leg_clusters.legs.push_back(leg_cluster);
+      // Publish to /detected_leg_clusters topic
+      leg_tracker::Leg leg = *it;
+      detected_leg_clusters.legs.push_back(leg);
       clusters_published_counter++;
 
-      // Publish marker
+      // Publish marker to rviz
       visualization_msgs::Marker m;
       m.header.stamp = scan->header.stamp;
       m.header.frame_id = fixed_frame_;
       m.ns = "LEGS";
       m.id = id_num++;
       m.type = m.SPHERE;
-      m.pose.position.x = leg_cluster.position.x ;
-      m.pose.position.y = leg_cluster.position.y;
+      m.pose.position.x = leg.position.x ;
+      m.pose.position.y = leg.position.y;
       m.pose.position.z = 0.2;
       m.scale.x = 0.13;
       m.scale.y = 0.13;
       m.scale.z = 0.13;
       m.color.a = 1;
-      // m.lifetime = ros::Duration(marker_display_lifetime_);
       m.color.r = 0;
-      m.color.g = leg_cluster.confidence;
-      m.color.b = leg_cluster.confidence;
+      m.color.g = leg.confidence;
+      m.color.b = leg.confidence;
       markers_pub_.publish(m);
 
-      if (clusters_published_counter == max_detected_clusters_)
+      // Comparison using '==' and not '>=' is important, as it allows <max_detected_clusters_>=-1 
+      // to publish infinite markers
+      if (clusters_published_counter == max_detected_clusters_) 
         break;
     }
 
     // Clear remaining markers in Rviz
-    for (int id_num_diff = num_prev_markers_published_ - id_num - 1; id_num_diff >= 0; id_num_diff--)
+    for (int id_num_diff = num_prev_markers_published_-id_num; id_num_diff > 0; id_num_diff--)
     {
       visualization_msgs::Marker m;
       m.header.stamp = scan->header.stamp;
@@ -298,16 +286,31 @@ public:
       m.action = m.DELETE;
       markers_pub_.publish(m);
     }
-    num_prev_markers_published_ = id_num;   
+    num_prev_markers_published_ = id_num; // For the next callback
 
     detected_leg_clusters_pub_.publish(detected_leg_clusters);
     cvReleaseMat(&tmp_mat);
-
-    clock_gettime(CLOCK_REALTIME, &toc);
-    double elapsed = ( toc.tv_sec - tic.tv_sec ) + (double)( toc.tv_nsec - tic.tv_nsec ) / (double)BILLION;
-    // printf("detect: %.3f\n", elapsed);
   }
+
+
+  /**
+  * @brief Comparison class to order Legs according to their relative distance to the laser scanner
+  */
+  class CompareLegs
+  {
+  public:
+      bool operator ()(const leg_tracker::Leg &a, const leg_tracker::Leg &b)
+      {
+          float rel_dist_a = pow(a.position.x*a.position.x + a.position.y*a.position.y, 1./2.);
+          float rel_dist_b = pow(b.position.x*b.position.x + b.position.y*b.position.y, 1./2.);          
+          return rel_dist_a < rel_dist_b;
+      }
+  };
+
 };
+
+
+
 
 
 int main(int argc, char **argv)

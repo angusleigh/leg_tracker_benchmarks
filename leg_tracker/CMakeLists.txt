@@ -43,7 +43,7 @@ add_executable(
   detect_leg_clusters 
   src/detect_leg_clusters.cpp
   src/laser_processor.cpp
-  src/calc_cluster_features.cpp
+  src/cluster_features.cpp
 )
 target_link_libraries(
   detect_leg_clusters 
@@ -77,7 +77,7 @@ add_executable(
   train_leg_detector
   src/train_leg_detector.cpp
   src/laser_processor.cpp
-  src/calc_cluster_features.cpp  
+  src/cluster_features.cpp  
 )
 target_link_libraries(
   train_leg_detector
@@ -99,17 +99,15 @@ add_dependencies(train_leg_detector ${PROJECT_NAME}_gencfg)
 
 
 install(
-  PROGRAMS scripts/multi_person_kalman_tracker.py
+  PROGRAMS scripts/joint_leg_tracker.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
 
 
 install(
-  PROGRAMS scripts/single_person_tracker.py
+  PROGRAMS scripts/individual_leg_tracker.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
-
-
 
 
 
