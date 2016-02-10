@@ -1,0 +1,11 @@
+<?xml version="1.0" ?>
+<launch>
+  <!-- params -->
+  <param name="readbag_filename" value="/home/angus/rosbags/person_following_benchmarks/split/2014-05-15-09-21-32.bag" />  
+  <param name="split_interval" value="30"/>
+
+  <!-- run annotate_rosbags -->
+  <node pkg="annotate_rosbags" type="split_rosbag.py" name="split_rosbag" output="screen" required="true"/>
+
+</launch>
+

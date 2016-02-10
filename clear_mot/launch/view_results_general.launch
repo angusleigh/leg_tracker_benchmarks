@@ -1,0 +1,23 @@
+<?xml version="1.0" ?>
+<launch>
+  <!-- params -->
+  <param name="readbag_filename" value="/home/angus/rosbags/webcam_tests_june_17/annotation/benchmark_3_tracked_clear_mot_individual_legs.bag" />  
+  <param name="scan_topic" value="/scan" />
+  <param name="fixed_frame" value="odom" />  
+  <param name="display_mode" value="True"/>
+
+  <!-- run rviz -->
+  <node pkg="rviz" type="rviz" name="rviz"
+    args="-d $(find annotate_rosbags)/rviz/annotate_rosbags_july17.rviz"/>  
+
+  <!-- load a dummy map. Otherwise can't register clicked points in rviz -->
+  <node name="map_server" pkg="map_server" type="map_server" args="$(find annotate_rosbags)/map/map.yaml"> 
+    <param name="frame_id" value="right_laser" />
+  </node>
+
+  <!-- run annotate_rosbags -->
+  <node pkg="annotate_rosbags" type="annotate_rosbags.py" name="annotate_rosbags" output="screen" required="true"/>
+
+
+</launch>
+

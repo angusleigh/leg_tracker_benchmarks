@@ -1,0 +1,14 @@
+<?xml version="1.0" ?>
+<launch>
+  <!-- params -->
+  <param name="readbag_filename_1" value="$(find leg_tracker)/../benchmark_rosbags/annotated_and_tracked/general_tracking_stationary_1_joint_leg.bag" />  
+  <param name="savebag_filename_1" value="$(find leg_tracker)/../benchmark_rosbags/annotated_and_tracked_and_clear_mot/general_tracking_stationary_1_joint_leg.bag" />    
+  <param name="scan_topic" value="/scan" />
+  <param name="constrain_to_specific_angle" value="true" />
+  <param name="min_angle" value="-80"/>
+  <param name="max_angle" value="12"/>
+    
+  <!-- run calc_clear_mot -->
+  <node pkg="clear_mot" type="clear_mot.py" name="clear_mot" output="screen" required="true"/>
+</launch>
+

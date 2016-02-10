@@ -1,0 +1,28 @@
+<?xml version="1.0" ?>
+
+<launch>
+  <!-- params -->
+  <param name="forest_file" value="$(find leg_tracker)/config/trained_leg_detector_res=0.33.yaml" />
+  <param name="scan_topic" value="/right_scan" />
+  <param name="publish_people_frame" value="right_laser"/>  
+  <param name="fixed_frame" value="odom" />   
+  <param name="publish_occluded" value="true"/>
+  <param name="scan_frequency" value="15"/>
+  <param name="use_scan_header_stamp_for_tfs" value="False"/>
+
+  <!-- run detect_leg_clusters -->
+  <node pkg="leg_tracker" type="detect_leg_clusters" name="detect_leg_clusters" output="screen"/>  
+
+  <!-- run multi_person_tracker -->
+  <node pkg="leg_tracker" type="individual_leg_tracker.py" name="individual_leg_tracker" output="screen"/>
+
+  <!-- run rviz
+  <node pkg="rviz" type="rviz" name="rviz"
+    args="-d $(find leg_tracker)/rviz/indoor.rviz"/>  -->
+
+  <param name="readbag_filename" value="$(find leg_tracker)/../benchmark_rosbags/annotated/person_following_indoor_3.bag"/>
+  <param name="savebag_filename" value="$(find leg_tracker)/../benchmark_rosbags/annotated_and_tracked/person_following_indoor_3_individual_leg.bag"/>
+  <node pkg="annotate_rosbags" type="playback_and_record_tracked.py" name="playback_and_record_tracked" output="screen" required="true"/>
+
+</launch>
+

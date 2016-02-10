@@ -1,0 +1,16 @@
+<launch>
+
+  <param name="publish_people_frame" value="right_laser"/>  
+  <param name="scan_topic" value="/right_scan" />
+
+  <node pkg="leg_detector" type="leg_detector" name="leg_detector" args="scan:=right_scan $(find leg_detector)/config/trained_leg_detector_res=0.33.yaml" output="screen"/>
+
+  <!-- run rviz -->
+  <node pkg="rviz" type="rviz" name="rviz"
+    args="-d $(find leg_tracker)/rviz/person_following.rviz"/>
+
+  <param name="readbag_filename" value="/home/angus/rosbags/person_following_benchmarks/annotated/2014-09-05-13-28-13_annotated.bag"/>
+  <param name="savebag_filename" value="/home/angus/rosbags/person_following_benchmarks/tracked/2014-09-05-13-28-13_annotated_tracked_leg_detector.bag"/>
+  <node pkg="annotate_rosbags" type="playback_and_record_tracked.py" name="playback_and_record_tracked" output="screen" required="true"/>
+</launch>
+

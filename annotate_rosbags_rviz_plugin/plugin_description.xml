@@ -1,0 +1,9 @@
+<library path="lib/libannotate_rosbags_rviz_plugin">
+  <class name="annotate_rosbags_rviz_plugin/AnnotationControl"
+         type="annotate_rosbags_rviz_plugin::TeleopPanel"
+         base_class_type="rviz::Panel">
+    <description>
+      A panel widget allowing simple diff-drive style robot base control.
+    </description>
+  </class>
+</library>

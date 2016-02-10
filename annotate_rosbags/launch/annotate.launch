@@ -1,0 +1,28 @@
+<?xml version="1.0" ?>
+<launch>
+  <!-- params -->
+  <param name="readbag_filename" value="/home/angus/annotation_insepction/benchmark_1.bag" />  
+  <param name="scan_topic" value="/scan" />
+  <param name="fixed_frame" value="left_laser" />  
+
+  <!-- run rviz -->
+  <node pkg="rviz" type="rviz" name="rviz"
+    args="-d $(find annotate_rosbags)/rviz/annotate_rosbags.rviz"/>  
+
+  <!-- load a dummy map. Otherwise can't register clicked points in rviz -->
+  <node name="map_server" pkg="map_server" type="map_server" args="$(find annotate_rosbags)/map/map.yaml"> 
+    <param name="frame_id" value="left_laser" />
+  </node>
+
+   <!-- run detect_leg_clusters to display valid clusters of sufficient size in the current frame (not to actually detect legs)-->
+  <param name="forest_file" value="$(find leg_tracker)/config/trained_leg_detector_res=0.33.yaml" />  
+  <param name="detection_threshold" value="-1.0" />  
+  <param name="max_detect_distance" value="100.0" />  
+  <param name="marker_display_lifetime" value="100.0" />  
+  <node pkg="leg_tracker" type="detect_leg_clusters" name="detect_leg_clusters" output="screen"/>
+  
+  <!-- run annotate_rosbags -->
+  <node pkg="annotate_rosbags" type="annotate_rosbags.py" name="annotate_rosbags" output="screen" required="true"/>
+
+</launch>
+

@@ -1,0 +1,10 @@
+<?xml version="1.0" ?>
+<launch>
+  <!-- params -->
+  <param name="root_rosbag" value="/home/angus/rosbags/person_following_benchmarks/split/2014-05-15-09-21-32.bag" />  
+
+  <!-- run annotate_rosbags -->
+  <node pkg="annotate_rosbags" type="merge_rosbags.py" name="merge_rosbags" output="screen" required="true"/>
+
+</launch>
+

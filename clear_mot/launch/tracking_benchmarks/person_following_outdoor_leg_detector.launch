@@ -1,0 +1,11 @@
+<?xml version="1.0" ?>
+<launch>
+  <!-- params -->
+  <param name="readbag_filename_1" value="$(find leg_tracker)/../benchmark_rosbags/annotated_and_tracked/person_following_outdoor_1_leg_detector.bag" />  
+  <param name="savebag_filename_1" value="$(find leg_tracker)/../benchmark_rosbags/annotated_and_tracked_and_clear_mot/person_following_outdoor_1_leg_detector.bag" />    
+  <param name="scan_topic" value="/scan_base2" />
+  
+  <!-- run calc_clear_mot -->
+  <node pkg="clear_mot" type="clear_mot.py" name="clear_mot" output="screen" required="true"/>
+</launch>
+
