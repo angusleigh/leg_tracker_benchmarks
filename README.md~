@@ -8,6 +8,7 @@ Usage
 --------------------
 ### Installation
 - clone leg_tracker_benchmarks repo into your indigo catkin source directory
+- extract all zip files in place in 'benchmark_rosbags/annotated' folder
 - install SciPy: 
     - $ sudo apt-get install python-scipy
 - install pykalman (http://pykalman.github.io/#installation or https://pypi.python.org/pypi/pykalman): 

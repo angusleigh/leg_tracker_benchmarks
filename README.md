@@ -65,6 +65,6 @@ You can also view them with the image_view package
 
 Unfortunately, the cameras are not calibrated as we only anticipated using them as a rough guide for ground-truth annotation and not for image processing. 
 
-To keep this repo to a reasonable size and so folks who don't want the images aren't forced to download them, the images are stored in a separate repo: leg_tracker_benchmarks_jpgs. It's about 1Gb in size. 
+To keep this repo to a reasonable size and so folks who don't want the images aren't forced to download them, the images are stored in a separate repo on BitBucket: https://bitbucket.org/aleigh/leg_tracker_benchmarks_jpg. It's about 1Gb in size. 
 
 To use the rosbags with the camera data, you should copy them into the benchmark_rosbags/annotated folder and replace the existing rosbags there.
