@@ -249,7 +249,7 @@ public:
 
   int mask_count_;
 
-  CvRTrees forest;
+  cv::Ptr< cv::ml::RTrees > forest;
 
   float connected_thresh_;
 
@@ -293,9 +293,10 @@ public:
     // Seed the psuedorandom number generator
     srand(1);
 
+    forest = cv::ml::RTrees::create();
     if (g_argc > 1) {
-      forest.load(g_argv[1]);
-      feat_count_ = forest.get_active_var_mask()->cols;
+      forest->load(g_argv[1]);
+      feat_count_ = forest->getVarCount();
       printf("Loaded forest with %d features: %s\n", feat_count_, g_argv[1]);
     } else {
       printf("Please provide a trained random forests classifier as an input.\n");
@@ -745,7 +746,7 @@ public:
       for (int k = 0; k < feat_count_; k++)
         tmp_mat->data.fl[k] = (float)(f[k]);
 
-      float probability = forest.predict_prob( tmp_mat );
+      float probability = forest->predict(cv::cvarrToMat(tmp_mat));
       Stamped<Point> loc((*i)->center(), tf_time, scan->header.frame_id);
       try {
         tfl_.transformPoint(fixed_frame_, loc, loc);
