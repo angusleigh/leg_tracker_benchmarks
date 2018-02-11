@@ -226,7 +226,24 @@ class PlayBackAndRecordTracked:
                     if topic == "/tf":
                         self.tf_pub.publish(msg)         
                     elif topic == "/visualization_marker":
-                        self.marker_pub.publish(msg)
+                        marker = Marker()
+                        marker.header = msg.header
+                        marker.ns = msg.ns
+                        marker.id = msg.id
+                        marker.type = msg.type          
+                        marker.action = msg.action
+                        marker.pose = msg.pose
+                        marker.scale = msg.scale
+                        marker.color = msg.color
+                        marker.lifetime = msg.lifetime
+                        marker.frame_locked = msg.frame_locked
+                        marker.points = msg.points
+                        marker.colors = msg.colors
+                        marker.text = msg.text
+                        marker.mesh_resource = msg.mesh_resource
+                        marker.mesh_use_embedded_materials = msg.mesh_use_embedded_materials
+                        self.marker_pub.publish(marker)
+
 
             except StopIteration:
                 # Passed the last message in the rosbag
