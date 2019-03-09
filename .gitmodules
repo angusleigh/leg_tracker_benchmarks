@@ -1,0 +1,3 @@
+[submodule "leg_tracker"]
+	path = leg_tracker
+	url = https://github.com/angusleigh/leg_tracker
