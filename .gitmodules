@@ -1,3 +1,6 @@
 [submodule "leg_tracker"]
 	path = leg_tracker
 	url = https://github.com/angusleigh/leg_tracker
+[submodule "people"]
+	path = people
+	url = https://github.com/wg-perception/people
