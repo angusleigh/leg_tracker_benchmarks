@@ -7,7 +7,8 @@ A. Leigh, J. Pineau, N. Olmedo and H. Zhang, Person Tracking and Following with 
 Usage
 --------------------
 ### Installation
-- clone leg_tracker_benchmarks (with "--recurse-submodules") repo into your melodic catkin source directory
+- $ cd ~/catkin_ws/src
+- $ git clone --recurse-submodules git@github.com:angusleigh/leg_tracker_benchmarks.git
 - extract all zip files in place in 'benchmark_rosbags/annotated' folder
 - install SciPy: 
     - $ sudo apt-get install python-scipy
