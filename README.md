@@ -23,7 +23,9 @@ Usage
 If you currently have the leg_tracker repo in your catkin_workspace, you will have to move it because leg_tracker_benchmarks has a version of the same package in it as well.
 
 ### Running the tracking benchmarks
-- `roslaunch leg_tracker [benchmark name]`
+- `cd benchmark_launch`
+- `roslaunch tracking_benchmarks/general_tracking_moving_1_joint_leg.launch`
+- or launch one of the other configurations in the `tracking_benchmarks` and `runtime_benchmarks` directories
 
 This will read-in the corresponding rosbag in benchmark_rosbags/annotated, publish it in a deterministic manner (so there's no race conditions or time-dependant inconsistencies between runs) using playback_and_record_tracked.py. The tracker's position estimates will be saved to benchmark_rosbags/annotated_and_tracked.
 
