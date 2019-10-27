@@ -9,7 +9,7 @@ Usage
 ### Installation
 - `cd ~/catkin_ws/src`
 - `git clone --recurse-submodules git@github.com:angusleigh/leg_tracker_benchmarks.git`
-- extract all zip files in place in 'benchmark_rosbags/annotated' folder
+- `unzip "leg_tracker_benchmarks/benchmark_rosbags/annotated/*.zip" -d leg_tracker_benchmarks/benchmark_rosbags/annotated/`
 - install dependencies
     - `sudo apt install python-scipy`
     - `sudo pip install pykalman`
