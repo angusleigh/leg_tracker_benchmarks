@@ -10,16 +10,13 @@ Usage
 - `cd ~/catkin_ws/src`
 - `git clone --recurse-submodules git@github.com:angusleigh/leg_tracker_benchmarks.git`
 - extract all zip files in place in 'benchmark_rosbags/annotated' folder
-- install SciPy: 
-    - `sudo apt-get install python-scipy`
-- install pykalman (http://pykalman.github.io/#installation or https://pypi.python.org/pypi/pykalman): 
+- install dependencies
+    - `sudo apt install python-scipy`
     - `sudo pip install pykalman`
-- install munkres for Python:
-    - `sudo pip install munkres`
-- install the baysian filter library
-    - `sudo apt-get install ros-melodic-bfl`
-- install QT4
-    - `sudo apt-get install qt4-default`
+    - `sudo apt install ros-melodic-bfl`
+    - `sudo apt install qt4-default`
+    - `sudo apt install ros-melodic-kalman-filter`
+    - `sudo apt install ros-melodic-easy-markers`
 - `cd ~/catkin_ws`
 - `catkin_make`
 
