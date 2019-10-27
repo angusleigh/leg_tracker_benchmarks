@@ -18,6 +18,7 @@ Usage
     - `sudo pip install munkres`
 - install the baysian filter library
     - `sudo apt-get install ros-melodic-bfl`
+- `cd ~/catkin_ws`
 - `catkin_make`
 
 If you currently have the leg_tracker repo in your catkin_workspace, you will have to move it because leg_tracker_benchmarks has a version of the same package in it as well.
