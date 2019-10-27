@@ -18,6 +18,8 @@ Usage
     - `sudo pip install munkres`
 - install the baysian filter library
     - `sudo apt-get install ros-melodic-bfl`
+- install QT4
+    - `sudo apt-get install qt4-default`
 - `cd ~/catkin_ws`
 - `catkin_make`
 
